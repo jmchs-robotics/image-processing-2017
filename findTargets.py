@@ -2,6 +2,18 @@
 #
 # findTargets.py
 #
+# receive contours and
+# minimum area bouding rectangles 
+# choose pairs of contours
+# that are approximately the right shape and
+# distance apart, calculate L/R, U/D, dist
+# based on centroids of identified targets
+# return L/R, U/D, dist
+#
+# use config.py for
+# config parameters
+#
+
 from __future__ import division
 import cv2
 import numpy as np
@@ -22,6 +34,8 @@ from config import boilerCentroidToDist
 #
 # process collection of boundingBoxes for an image pattern
 #  that resembles the LIFT PEG retroflective tape
+#  and return calculations based on the centroids of
+#  the best input contours
 #
 def findPegCentroids( boundingBoxes, contours, imgW, imgH):
     
@@ -109,22 +123,10 @@ def findPegCentroids( boundingBoxes, contours, imgW, imgH):
     ctr2targetLR = ( r[0] + r[2] / 2.0) - ( imgW / 2.0) - pegCenterCalibration
 
     # compute distance to target
-    # TODO: what to do in case can't see 2nd piece of RF tape
     outDistW = pegPixWidthToDist / ((b[2] + b2[2]) / 2.0)
     outDistH = pegPixHeightToDist / (( b[3] + b2[3])/2.0) # based on ave height of each piece of RF tape
 
-        #
-        # TODO: deal with a bisected tape stip
-        #
-        # --- iterate higher contours by counting j from 1...
-        # ---- if contour[ I+j] within distance (x,y), size and shape (one part of the tape, bisected by the peg)
-        # ----- iterate lower contours by counting j from -1, -2...
-        # ------ if contour[ I+j] within distance (x,y), size and shape (one part of the tape, bisected by the peg)
-        # ------- calculate distance based on outside perimeter of all 3 contours
-        # ------- calculate peg position from outside perimeter all 3
-        # ------- return peg position, distance, message which way to lean because you're off target enough to have a tape obscured
 
-    #if( ctr2targetLR < m + 100 and ctr2targetLR > m - 100): # good result? Send it
     trackDir = "C"
     if( ctr2targetLR < - pegCloseToCenter):
         trackDir = "L"

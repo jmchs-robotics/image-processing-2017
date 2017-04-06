@@ -2,9 +2,12 @@
 #
 # runPeg640.py
 #
-# try to run the trackRft.py.  If it succeeds it'll never return.  If it fails, try it again.
-# Started by /etc/rc.local so the software will run indefinitely when the machine is started.
+# check for a network either on 10.59.33 or 192.168.  If none, wait 2 seconds and try again.
+# check if the RealSense is running.  If not, wait 2 seconds and try again.
+# wait 5 seconds
+# try to run the trackRft.py.  If it succeeds it'll never return.  If it fails, wait 2 seconds and try it again.
 #
+# Started by /etc/rc.local so the software will run indefinitely when the UP board is started.
 #
 
 import os

@@ -2,14 +2,53 @@
 #
 # trackRft.py
 #
-# adding ability to filter/ignore outlier results 
-#  in boiler targeting 3/12/17
-# report targeting info based on centroids of identified targets
-# added multi-threading for reading webcam using threaddedWebcamReader.py
-# changed the algorithm for finding the boiler target RFT 
-#  from using straight, upright bounding boxes via cv2.boundingRect()
-#  to now use minimum area bouding rectangles via cv2.minAreaRect()
+# visually track the retroflective tape targets
+# output targeting info L/R, U/D, distance est.
+# to UDP socket
 #
+# read command line parameters
+# identify IP broadcast address
+# identify USB sources for webcam, RealSense
+# set brightness and contrast way down on camera
+# read RealSense (1920x1080 at 30fps or 640x480 at 60fps)
+#  or webcam (1280x720 at 30fps) or file input (any)
+#  or Axis Cam (but not as well tested)
+#    (only processes the middle 1/3 of image width, full height of 1920x1080 input, to keep up with 30fps)
+#  use multi-threading for reading webcam using threaddedWebcamReader.py
+# process for peg or boiler targets by
+# hsv thresholding, identifying contours, use
+# findTargets.py which uses
+# minimum area bouding rectangles to choose contours
+# that are approximately the right shape and
+# distance apart, calculate L/R, U/D, dist 
+# based on centroids of identified targets
+#
+# other options:
+#   set port, IP address for output
+#   only process specified number of images
+#   write last-processed images to snapshot files
+#   print target output to stdout
+#   display images on screen
+#   write all images to same file, for serving over web (not well tested)
+#   write occasional images to snapshot files(not well tested)
+#
+# uses findTargets.py for
+#   algorithms to pick targets from identified contours
+# uses threaddedWebcamReader.py
+#   to read webcam in its own thread 
+#   because it blocks and it's slow
+#   and provide image frames
+# uses config.py
+#   to hold many config parameters
+#
+# other notes:
+#  filters/ignores outlier results in boiler targeting 
+#    but this isn't well tested
+#  algorithms, and especially parameters in config.py, converged on 
+#    using the RealSense 640x480 for peg tracking
+#    and using the WebCam 1280x720 for boiler tracking
+#
+
 from __future__ import division
 import cv2
 import numpy as np
@@ -20,10 +59,12 @@ import os
 import re
 import math
 import threading
-import findTargets
 
+# algorithms to pick targets from identified contours
+import findTargets 
+
+# config.py holds many config parameters
 from config import lower, upper, RS_brightness, pegLower, pegUpper
-
 from config import printDebug, sdTimingThresh
 
 # 
@@ -45,8 +86,7 @@ def imwriteInOwnThread( img):
     cv2.imwrite( "/tmp/pic.jpg", img)
 
 #
-# set default parameter
-#  then parse command line for use parameters
+# set default parameters
 #
 inFileName = ''
 inDepthFileName = ''
@@ -74,7 +114,7 @@ except:
 useAxisCam = False
 useWebCam = False
 
-# write output files r.jpg and d.jpg of last images, with target areas inscribed
+# write output files of last images, with target areas inscribed
 writeSnapshotFiles = False
 
 # set to True to write boiler webcam images to /tmp/pic.jpg at ~10 FPS
@@ -96,6 +136,9 @@ trackBoiler = False
 snapshotDebug = False
 sdLastOutString = "No targets yet found"
 
+#
+# iterate command line parameters
+#
 i = 0
 for a in sys.argv:
     if( a == '--images'): # display images on screen
@@ -121,9 +164,9 @@ for a in sys.argv:
         useMjpgStreamer = True
     elif( a == '--snapshots'): # write snapshot file of last image processed
         writeSnapshotFiles = True
-    elif( a == '--snapshotDebug'): # write snapshot files while running
+    elif( a == '--snapshotDebug'): # write debug snapshot files while running
    	snapshotDebug = True
-    elif( a == '--sdTimingThresh'): # write snapshot files this many seconds
+    elif( a == '--sdTimingThresh'): # write debug snapshot files this many seconds
 	sdTimingThresh = int( sys.argv[ i+1])
     elif( a == '--640'): # use realsense 640x480 input, 60 fps
         realsenseWidth = 640
@@ -154,7 +197,7 @@ if snapshotDebug == True:
     sDfp = open( "/home/frc5933/steamworks2017/image-processing/calibrationFiles/{}_{}_sd.txt".format( pOrB, int( time.time())), "a")
 sdNextTime = time.time() - 1000
 
-# import pyrealsense if not processing a file
+# import pyrealsense to use RealSense camera
 pyrs = None
 if( len( inFileName) == 0 and useAxisCam == False and useWebCam == False):
     try:
@@ -166,8 +209,9 @@ if( len( inFileName) == 0 and useAxisCam == False and useWebCam == False):
 print 'Starting...'
 
 #
-# start the RealSense camera or read the input file
+# find USB 'address', start the RealSense camera 
 #  or Axis IP cam or Microsoft LifeCam webcam
+#  or read the input file
 #
 if pyrs:
     print "Identifying Microsoft LifeCam web cam device number..."
@@ -255,7 +299,7 @@ if frameCounterInc == 1:
 else:
     print "Processing infinite loop...\n"
 
-# tracking peg?  Use pegLower and pegUpper
+# tracking peg?  Use pegLower and pegUpper for hsv thresholds
 if( trackPeg == True):
     lower = pegLower
     upper = pegUpper
@@ -265,16 +309,19 @@ if( useMjpgStreamer == True):
     os.system( 'LD_LIBRARY_PATH=/usr/local/lib mjpg_streamer -i "input_file.so -f /tmp -n pic.jpg" -o "output_http.so -w /usr/local/www -p 5802"&')
     time.sleep( 2)
 
+#  TODO: confirm if doing this anywhere, or remove
 # keep last 3 tracking data so can not write out very bad data points
+"""
 ctr2targetLRhistL = [0, 0, 0]
 histLctr = 0
+"""
 
 #
 # main loop
 #
 i = 0
 imgNum = None
-startTime = time.time()
+startTime = time.time() # to report fps processed
 distBasedOnCentroidsLast = -1
 while( i < framesToGrab):
     #
@@ -313,16 +360,9 @@ while( i < framesToGrab):
         # only process the middle 1/3 of image width, full height.
 	#  for 1080p input.  Leave 640x480 alone.
 	widthMult = 1
-    # 641):
     if( imgW > 1280): # processing 1920x1080 (1080p)
         img = imgIn[ 0:imgH, int(imgW/3.0) : int(imgW*2.0/3.0)]
     elif( imgW > 640):  # processing 1280x720 (720p)
-        # only process part of the image
-        # process full width, top 2/3 of height
-        # img = imgIn[ 0:int( imgH * 2.0 / 3.0), 0:imgW]
-        # process middle of width from 1/4 to 3/4, top 2/3 of height
-        # img = imgIn[ 0:int( imgH * 2.0 / 3.0), int( imgW / 4.0) : int( imgW * 3.0 / 4.0) ]
-	# using threaddedWebcamReader, so can now process whole image and keep up with 30 fps
 	img = imgIn
         widthMult = 1/2.0
     else:  # processing 640x480
@@ -332,7 +372,7 @@ while( i < framesToGrab):
         
     hsv = cv2.cvtColor( img, cv2.COLOR_BGR2HSV)
 
-    # Threshold the HSV image to get mask of only desired colors
+    # Threshold the HSV image to get mask of  desired colors
     mask = cv2.inRange( hsv, lower, upper)
     if( writeSnapshotFiles):
         cv2.imwrite( 'colorMasked.jpg', mask)
